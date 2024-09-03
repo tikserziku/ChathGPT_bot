@@ -20,10 +20,20 @@ conversation_history = {}
 
 def start(update: Update, context: CallbackContext) -> None:
     """Отправляет приветственное сообщение при команде /start."""
-    update.message.reply_text('Привет! Я бот, который может общаться с помощью ChatGPT. Просто напиши мне что-нибудь!')
+    update.message.reply_text('Привет! Я бот, который может общаться с помощью ChatGPT и создавать изображения. Просто напиши мне что-нибудь или попроси "нарисуй [описание]"!')
 
 def handle_message(update: Update, context: CallbackContext) -> None:
-    """Обрабатывает входящие сообщения и отправляет их в ChatGPT."""
+    """Обрабатывает входящие сообщения и отправляет их в ChatGPT или создает изображение."""
+    user_id = update.effective_user.id
+    message = update.message.text
+
+    if message.lower().startswith("нарисуй"):
+        generate_image(update, context)
+    else:
+        chat_with_gpt(update, context)
+
+def chat_with_gpt(update: Update, context: CallbackContext) -> None:
+    """Обрабатывает диалог с ChatGPT."""
     user_id = update.effective_user.id
     message = update.message.text
 
@@ -37,7 +47,7 @@ def handle_message(update: Update, context: CallbackContext) -> None:
     try:
         # Отправляем запрос к ChatGPT
         response = openai.ChatCompletion.create(
-            model="gpt-4o-2024-05-13",
+            model="gpt-3.5-turbo",
             messages=conversation_history[user_id]
         )
 
@@ -47,7 +57,7 @@ def handle_message(update: Update, context: CallbackContext) -> None:
         # Добавляем ответ ChatGPT в историю
         conversation_history[user_id].append({"role": "assistant", "content": chatgpt_response})
 
-        # Ограничиваем историю последними 10 сообщениями, чтобы избежать превышения лимитов токенов
+        # Ограничиваем историю последними 10 сообщениями
         conversation_history[user_id] = conversation_history[user_id][-10:]
 
         # Отправляем ответ пользователю
@@ -56,6 +66,32 @@ def handle_message(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"Error in ChatGPT request: {e}")
         update.message.reply_text("Извините, произошла ошибка при обработке вашего запроса.")
+
+def generate_image(update: Update, context: CallbackContext) -> None:
+    """Генерирует изображение на основе запроса пользователя."""
+    prompt = update.message.text[7:].strip()  # Убираем "нарисуй " из начала сообщения
+    
+    if not prompt:
+        update.message.reply_text("Пожалуйста, укажите, что нарисовать после слова 'нарисуй'.")
+        return
+
+    try:
+        # Отправляем запрос к DALL-E
+        response = openai.Image.create(
+            prompt=prompt,
+            n=1,
+            size="1024x1024"
+        )
+
+        # Получаем URL сгенерированного изображения
+        image_url = response['data'][0]['url']
+
+        # Отправляем изображение пользователю
+        update.message.reply_photo(image_url, caption=f"Вот изображение по запросу: {prompt}")
+
+    except Exception as e:
+        logger.error(f"Error in image generation: {e}")
+        update.message.reply_text("Извините, произошла ошибка при генерации изображения.")
 
 def main() -> None:
     """Запускает бота."""
