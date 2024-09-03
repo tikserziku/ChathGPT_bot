@@ -47,7 +47,7 @@ def chat_with_gpt(update: Update, context: CallbackContext) -> None:
     try:
         # Отправляем запрос к ChatGPT
         response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+            model="chatgpt-4o-latest",
             messages=conversation_history[user_id]
         )
 
