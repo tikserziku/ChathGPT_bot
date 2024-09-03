@@ -18,15 +18,16 @@ openai.api_key = OPENAI_API_KEY
 # Словарь для хранения истории разговоров
 conversation_history = {}
 
+# Максимальное количество токенов для запроса
+MAX_TOKENS = 4000
+
 def start(update: Update, context: CallbackContext) -> None:
     """Отправляет приветственное сообщение при команде /start."""
     update.message.reply_text('Привет! Я бот, который может общаться с помощью ChatGPT и создавать изображения. Просто напиши мне что-нибудь или попроси "нарисуй [описание]"!')
 
 def handle_message(update: Update, context: CallbackContext) -> None:
     """Обрабатывает входящие сообщения и отправляет их в ChatGPT или создает изображение."""
-    user_id = update.effective_user.id
     message = update.message.text
-
     if message.lower().startswith("нарисуй"):
         generate_image(update, context)
     else:
@@ -45,10 +46,13 @@ def chat_with_gpt(update: Update, context: CallbackContext) -> None:
     conversation_history[user_id].append({"role": "user", "content": message})
 
     try:
+        # Обрезаем историю, чтобы не превысить лимит токенов
+        trimmed_history = trim_chat_history(conversation_history[user_id])
+
         # Отправляем запрос к ChatGPT
         response = openai.ChatCompletion.create(
-            model="chatgpt-4o-latest",
-            messages=conversation_history[user_id]
+            model="chatgpt-4o-latest",  # Используем GPT-4
+            messages=trimmed_history
         )
 
         # Получаем ответ от ChatGPT
@@ -76,8 +80,9 @@ def generate_image(update: Update, context: CallbackContext) -> None:
         return
 
     try:
-        # Отправляем запрос к DALL-E
+        # Отправляем запрос к DALL-E 3
         response = openai.Image.create(
+            model="dall-e-3",
             prompt=prompt,
             n=1,
             size="1024x1024"
@@ -93,15 +98,21 @@ def generate_image(update: Update, context: CallbackContext) -> None:
         logger.error(f"Error in image generation: {e}")
         update.message.reply_text("Извините, произошла ошибка при генерации изображения.")
 
+def trim_chat_history(history: list) -> list:
+    """Обрезает историю чата, чтобы она не превышала максимальное количество токенов"""
+    while len(str(history)) > MAX_TOKENS:
+        if len(history) > 1:
+            history.pop(1)  # Удаляем второе сообщение (после системного)
+        else:
+            break
+    return history
+
 def main() -> None:
     """Запускает бота."""
     updater = Updater(TELEGRAM_TOKEN)
-
     dp = updater.dispatcher
-
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-
     updater.start_polling()
     updater.idle()
 
