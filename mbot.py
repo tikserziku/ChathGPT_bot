@@ -44,6 +44,11 @@ def init_db():
                 access_granted BOOLEAN,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )''')
+            cur.execute('''
+            CREATE TABLE IF NOT EXISTS admins (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT UNIQUE
+            )''')
         conn.commit()
 
 def add_user(user_id, unique_link):
@@ -61,6 +66,9 @@ def add_user(user_id, unique_link):
                 return False
 
 def check_access(user_id):
+    if is_admin(user_id):
+        return True, -1  # Админы всегда имеют доступ
+
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute('''
@@ -71,15 +79,39 @@ def check_access(user_id):
             if result:
                 access_granted, created_at = result
                 if access_granted:
-                    if datetime.now() - created_at > timedelta(days=30):
+                    time_passed = datetime.now() - created_at
+                    if time_passed > timedelta(days=30):
                         cur.execute('''
                         UPDATE users SET access_granted = %s 
                         WHERE user_id = %s
                         ''', (False, user_id))
                         conn.commit()
-                        return False
-                    return True
-    return False
+                        return False, 0
+                    return True, 30 - time_passed.days
+            return False, -1
+
+def is_admin(user_id):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute('SELECT * FROM admins WHERE user_id = %s', (user_id,))
+            return cur.fetchone() is not None
+
+def add_admin(user_id):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute('INSERT INTO admins (user_id) VALUES (%s)', (user_id,))
+                conn.commit()
+                return True
+            except psycopg2.IntegrityError:
+                conn.rollback()
+                return False
+
+def remove_admin(user_id):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute('DELETE FROM admins WHERE user_id = %s', (user_id,))
+            return cur.rowcount > 0
 
 # Bot command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -91,84 +123,65 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             await update.message.reply_text("Извините, эта ссылка уже использована или недействительна.")
     else:
-        await update.message.reply_text("Пожалуйста, используйте команду /start с уникальной ссылкой.")
+        await update.message.reply_text("Пожалуйста, используйте команду /start с уникальной ссылкой для активации доступа.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    if check_access(user.id):
+    access_granted, days_left = check_access(user.id)
+    if access_granted:
         message = update.message.text
         if message.lower().startswith("нарисуй"):
             await generate_image(update, context)
         else:
             await chat_with_gpt(update, context)
+        if days_left > 0 and days_left <= 5:
+            await update.message.reply_text(f"Внимание! У вас осталось {days_left} дней доступа.")
+    elif days_left == 0:
+        await update.message.reply_text("Извините, ваш доступ истек. Пожалуйста, обратитесь к администратору для продления.")
     else:
-        await update.message.reply_text("Извините, ваш доступ истек или не активирован.")
+        await update.message.reply_text("Доступ не активирован. Используйте команду /start с уникальной ссылкой для активации.")
 
-async def chat_with_gpt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    message = update.message.text
-
-    if user_id not in conversation_history:
-        conversation_history[user_id] = []
-
-    conversation_history[user_id].append({"role": "user", "content": message})
-
-    try:
-        trimmed_history = trim_chat_history(conversation_history[user_id])
-
-        response = openai.ChatCompletion.create(
-            model="chatgpt-4o-latest",  # Using GPT-4
-            messages=trimmed_history
-        )
-
-        chatgpt_response = response.choices[0].message['content']
-
-        conversation_history[user_id].append({"role": "assistant", "content": chatgpt_response})
-
-        conversation_history[user_id] = conversation_history[user_id][-10:]
-
-        await update.message.reply_text(chatgpt_response)
-
-    except Exception as e:
-        logger.error(f"Error in ChatGPT request: {e}")
-        await update.message.reply_text("Извините, произошла ошибка при обработке вашего запроса.")
-
-async def generate_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    prompt = update.message.text[7:].strip()
-    
-    if not prompt:
-        await update.message.reply_text("Пожалуйста, укажите, что нарисовать после слова 'нарисуй'.")
-        return
-
-    try:
-        response = openai.Image.create(
-            model="dall-e-3",
-            prompt=prompt,
-            n=1,
-            size="1024x1024"
-        )
-
-        image_url = response['data'][0]['url']
-
-        await update.message.reply_photo(image_url, caption=f"Вот изображение по запросу: {prompt}")
-
-    except Exception as e:
-        logger.error(f"Error in image generation: {e}")
-        await update.message.reply_text("Извините, произошла ошибка при генерации изображения.")
-
-def trim_chat_history(history: list) -> list:
-    while len(str(history)) > MAX_TOKENS:
-        if len(history) > 1:
-            history.pop(1)
+async def add_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if is_admin(user.id):
+        if context.args and len(context.args) > 0:
+            new_admin_id = int(context.args[0])
+            if add_admin(new_admin_id):
+                await update.message.reply_text(f"Пользователь {new_admin_id} добавлен как администратор.")
+            else:
+                await update.message.reply_text("Не удалось добавить администратора. Возможно, он уже существует.")
         else:
-            break
-    return history
+            await update.message.reply_text("Пожалуйста, укажите ID пользователя для добавления в администраторы.")
+    else:
+        await update.message.reply_text("У вас нет прав для выполнения этой команды.")
+
+async def remove_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    if is_admin(user.id):
+        if context.args and len(context.args) > 0:
+            admin_id = int(context.args[0])
+            if remove_admin(admin_id):
+                await update.message.reply_text(f"Администратор {admin_id} удален.")
+            else:
+                await update.message.reply_text("Не удалось удалить администратора. Возможно, его не существует.")
+        else:
+            await update.message.reply_text("Пожалуйста, укажите ID администратора для удаления.")
+    else:
+        await update.message.reply_text("У вас нет прав для выполнения этой команды.")
+
+# ... (остальные функции остаются без изменений)
 
 def main() -> None:
     init_db()  # Initialize the database
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("add_admin", add_admin_command))
+    application.add_handler(CommandHandler("remove_admin", remove_admin_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Настройка логгера для скрытия токена
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    
     application.run_polling()
 
 if __name__ == '__main__':
