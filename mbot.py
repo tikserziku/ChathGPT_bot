@@ -59,6 +59,13 @@ def init_db():
             )''')
         conn.commit()
 
+def has_admins():
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute('SELECT COUNT(*) FROM admins')
+            count = cur.fetchone()[0]
+            return count > 0
+
 def generate_unique_link():
     return str(uuid.uuid4())
 
@@ -154,6 +161,22 @@ def remove_admin(user_id):
 # Bot command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
+    
+    # Проверяем, есть ли администраторы
+    if not has_admins():
+        # Если администраторов нет, делаем текущего пользователя администратором
+        if add_admin(user.id):
+            await update.message.reply_text(f"Поздравляем, {user.mention_html()}! Вы стали первым администратором бота.")
+        else:
+            await update.message.reply_text("Произошла ошибка при назначении администратора.")
+        return
+
+    # Если пользователь уже администратор, даем доступ без ссылки
+    if is_admin(user.id):
+        await update.message.reply_text(f"Добро пожаловать, администратор {user.mention_html()}!")
+        return
+
+    # Для обычных пользователей проверяем наличие уникальной ссылки
     if context.args and len(context.args) > 0:
         unique_link = context.args[0]
         if add_user(user.id, unique_link):
