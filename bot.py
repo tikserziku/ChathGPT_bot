@@ -117,7 +117,7 @@ async def chat_with_gpt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         trimmed_history = trim_chat_history(conversation_history[user_id])
 
         response = openai.ChatCompletion.create(
-            model="gpt-4",  # Using GPT-4
+            model="chatgpt-4o-latest",  # Using GPT-4
             messages=trimmed_history
         )
 
