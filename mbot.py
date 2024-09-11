@@ -1,7 +1,7 @@
 import os
 import logging
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 import openai
 import psycopg2
 from psycopg2 import sql
@@ -165,13 +165,12 @@ def trim_chat_history(history: list) -> list:
     return history
 
 def main() -> None:
-    init_db()
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    updater = Updater(TELEGRAM_TOKEN)
+    dp = updater.dispatcher
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
     main()
