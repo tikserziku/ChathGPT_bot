@@ -2,8 +2,7 @@ import os
 import logging
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
-import openai
-import requests
+from openai import OpenAI
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -13,8 +12,8 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
-# Инициализация OpenAI
-openai.api_key = OPENAI_API_KEY
+# Инициализация клиента OpenAI
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Словарь для хранения истории разговоров
 conversation_history = {}
@@ -73,13 +72,13 @@ def chat_with_gpt(update: Update, context: CallbackContext) -> None:
         trimmed_history = trim_chat_history(conversation_history[user_id])
 
         # Отправляем запрос к ChatGPT
-        response = openai.ChatCompletion.create(
-            model="chatgpt-4o-latest",  # Используем GPT-4
+        response = client.chat.completions.create(
+            model="gpt-4",  # Используем GPT-4
             messages=trimmed_history
         )
 
         # Получаем ответ от ChatGPT
-        chatgpt_response = response.choices[0].message['content']
+        chatgpt_response = response.choices[0].message.content
 
         # Добавляем ответ ChatGPT в историю
         conversation_history[user_id].append({"role": "assistant", "content": chatgpt_response})
@@ -104,7 +103,7 @@ def generate_image(update: Update, context: CallbackContext) -> None:
 
     try:
         # Отправляем запрос к DALL-E 3
-        response = openai.Image.create(
+        response = client.images.generate(
             model="dall-e-3",
             prompt=prompt,
             n=1,
@@ -112,7 +111,7 @@ def generate_image(update: Update, context: CallbackContext) -> None:
         )
 
         # Получаем URL сгенерированного изображения
-        image_url = response['data'][0]['url']
+        image_url = response.data[0].url
 
         # Отправляем изображение пользователю
         update.message.reply_photo(image_url, caption=f"Вот изображение по запросу: {prompt}")
@@ -164,27 +163,34 @@ def generate_speech(update: Update, context: CallbackContext) -> int:
     voice = context.user_data['voice']
     emotion = emotions[context.user_data['emotion']]
     
+    logger.info(f"Generating speech for text: '{text}', voice: {voice}, emotion: {context.user_data['emotion']}")
+    
     try:
-        response = openai.Audio.create(
+        logger.info("Sending request to OpenAI API")
+        response = client.audio.speech.create(
             model="tts-1",
             voice=voice,
             input=f"{emotion}{text}"
         )
+        logger.info("Received response from OpenAI API")
 
         # Сохраняем аудио во временный файл
-        with open("temp_audio.mp3", "wb") as f:
-            f.write(response.content)
+        temp_file = f"temp_audio_{update.effective_user.id}.mp3"
+        logger.info(f"Saving audio to temporary file: {temp_file}")
+        response.stream_to_file(temp_file)
 
         # Отправляем аудиофайл
-        with open("temp_audio.mp3", "rb") as audio:
+        logger.info("Sending audio file to user")
+        with open(temp_file, "rb") as audio:
             update.message.reply_audio(audio)
 
         # Удаляем временный файл
-        os.remove("temp_audio.mp3")
+        logger.info(f"Removing temporary file: {temp_file}")
+        os.remove(temp_file)
 
     except Exception as e:
-        logger.error(f"Error in speech generation: {e}")
-        update.message.reply_text("Извините, произошла ошибка при генерации речи.")
+        logger.error(f"Error in speech generation: {str(e)}", exc_info=True)
+        update.message.reply_text(f"Извините, произошла ошибка при генерации речи: {str(e)}")
 
     return ConversationHandler.END
 
