@@ -2,7 +2,7 @@ import os
 import logging
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
-from openai import OpenAI
+import openai
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -12,8 +12,17 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
-# Инициализация клиента OpenAI
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Инициализация OpenAI
+openai.api_key = OPENAI_API_KEY
+
+# Проверка версии OpenAI и инициализация клиента, если это новая версия
+try:
+    from openai import OpenAI
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    logger.info("Using new OpenAI client")
+except ImportError:
+    client = openai
+    logger.info("Using legacy OpenAI client")
 
 # Словарь для хранения истории разговоров
 conversation_history = {}
@@ -71,14 +80,20 @@ def chat_with_gpt(update: Update, context: CallbackContext) -> None:
         # Обрезаем историю, чтобы не превысить лимит токенов
         trimmed_history = trim_chat_history(conversation_history[user_id])
 
-        # Отправляем запрос к ChatGPT
-        response = client.chat.completions.create(
-            model="gpt-4",  # Используем GPT-4
-            messages=trimmed_history
-        )
-
-        # Получаем ответ от ChatGPT
-        chatgpt_response = response.choices[0].message.content
+        if hasattr(client, 'chat'):
+            # Новый клиент
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=trimmed_history
+            )
+            chatgpt_response = response.choices[0].message.content
+        else:
+            # Старый клиент
+            response = client.ChatCompletion.create(
+                model="gpt-4",
+                messages=trimmed_history
+            )
+            chatgpt_response = response.choices[0].message['content']
 
         # Добавляем ответ ChatGPT в историю
         conversation_history[user_id].append({"role": "assistant", "content": chatgpt_response})
@@ -102,16 +117,24 @@ def generate_image(update: Update, context: CallbackContext) -> None:
         return
 
     try:
-        # Отправляем запрос к DALL-E 3
-        response = client.images.generate(
-            model="dall-e-3",
-            prompt=prompt,
-            n=1,
-            size="1024x1024"
-        )
-
-        # Получаем URL сгенерированного изображения
-        image_url = response.data[0].url
+        if hasattr(client, 'images'):
+            # Новый клиент
+            response = client.images.generate(
+                model="dall-e-3",
+                prompt=prompt,
+                n=1,
+                size="1024x1024"
+            )
+            image_url = response.data[0].url
+        else:
+            # Старый клиент
+            response = client.Image.create(
+                model="dall-e-3",
+                prompt=prompt,
+                n=1,
+                size="1024x1024"
+            )
+            image_url = response['data'][0]['url']
 
         # Отправляем изображение пользователю
         update.message.reply_photo(image_url, caption=f"Вот изображение по запросу: {prompt}")
@@ -166,18 +189,27 @@ def generate_speech(update: Update, context: CallbackContext) -> int:
     logger.info(f"Generating speech for text: '{text}', voice: {voice}, emotion: {context.user_data['emotion']}")
     
     try:
-        logger.info("Sending request to OpenAI API")
-        response = client.audio.speech.create(
-            model="tts-1",
-            voice=voice,
-            input=f"{emotion}{text}"
-        )
-        logger.info("Received response from OpenAI API")
-
-        # Сохраняем аудио во временный файл
-        temp_file = f"temp_audio_{update.effective_user.id}.mp3"
-        logger.info(f"Saving audio to temporary file: {temp_file}")
-        response.stream_to_file(temp_file)
+        if hasattr(client, 'audio'):
+            # Новый клиент
+            response = client.audio.speech.create(
+                model="tts-1",
+                voice=voice,
+                input=f"{emotion}{text}"
+            )
+            temp_file = f"temp_audio_{update.effective_user.id}.mp3"
+            response.stream_to_file(temp_file)
+        else:
+            # Старый клиент
+            response = client.Audio.create(
+                model="tts-1",
+                voice=voice,
+                input=f"{emotion}{text}"
+            )
+            temp_file = f"temp_audio_{update.effective_user.id}.mp3"
+            with open(temp_file, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=1024):
+                    if chunk:
+                        f.write(chunk)
 
         # Отправляем аудиофайл
         logger.info("Sending audio file to user")
