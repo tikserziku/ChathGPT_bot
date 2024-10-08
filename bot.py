@@ -85,7 +85,7 @@ def chat_with_gpt(update: Update, context: CallbackContext) -> None:
 
         if hasattr(client, 'chat'):
             response = client.chat.completions.create(
-                model="gpt-4",
+                model="chatgpt-4o-latest",
                 messages=trimmed_history
             )
             chatgpt_response = response.choices[0].message.content
