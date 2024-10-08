@@ -15,7 +15,7 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 # Инициализация OpenAI
 openai.api_key = OPENAI_API_KEY
 
-# Проверка версии OpenAI и инициализация клиента, если это новая версия
+# Проверка версии OpenAI и инициализация клиента
 try:
     from openai import OpenAI
     client = OpenAI(api_key=OPENAI_API_KEY)
@@ -31,9 +31,9 @@ conversation_history = {}
 MAX_TOKENS = 4000
 
 # Состояния для ConversationHandler
-CHOOSE_VOICE, GET_TEXT = range(2)
+CHOOSE_VOICE, CHOOSE_EMOTION, GET_TEXT = range(3)
 
-# Словарь для голосов
+# Словари для голосов и эмоций
 voices = {
     "Alloy": "alloy",
     "Echo": "echo",
@@ -43,15 +43,30 @@ voices = {
     "Shimmer": "shimmer"
 }
 
+emotions = {
+    "Нейтральный": "нейтрально",
+    "Счастливый": "радостно",
+    "Грустный": "грустно",
+    "Злой": "сердито",
+    "Удивленный": "удивленно",
+    "Испуганный": "испуганно"
+}
+
+# Команды для активации TTS
+tts_commands = ["озвучь", "произнеси", "озвучь мне текст", "произнеси следующий текст", "igarsink"]
+
 def start(update: Update, context: CallbackContext) -> None:
     """Отправляет приветственное сообщение при команде /start."""
-    update.message.reply_text('Привет! Я бот, который может общаться с помощью ChatGPT, создавать изображения и преобразовывать текст в речь. Используй /tts для преобразования текста в речь!')
+    update.message.reply_text('Привет! Я бот, который может общаться с помощью ChatGPT, создавать изображения и преобразовывать текст в речь. Используй /tts или напиши "озвучь" для преобразования текста в речь!')
 
 def handle_message(update: Update, context: CallbackContext) -> None:
-    """Обрабатывает входящие сообщения и отправляет их в ChatGPT или создает изображение."""
-    message = update.message.text
-    if message.lower().startswith("нарисуй"):
+    """Обрабатывает входящие сообщения."""
+    message = update.message.text.lower()
+    
+    if message.startswith("нарисуй"):
         generate_image(update, context)
+    elif any(message.startswith(cmd) for cmd in tts_commands):
+        return tts_start(update, context)
     else:
         chat_with_gpt(update, context)
 
@@ -141,8 +156,18 @@ def tts_start(update: Update, context: CallbackContext) -> int:
     return CHOOSE_VOICE
 
 def choose_voice(update: Update, context: CallbackContext) -> int:
-    """Сохраняет выбранный голос и запрашивает текст."""
+    """Сохраняет выбранный голос и запрашивает эмоцию."""
     context.user_data['voice'] = voices[update.message.text]
+    reply_keyboard = [list(emotions.keys())]
+    update.message.reply_text(
+        'Выберите эмоцию:',
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+    )
+    return CHOOSE_EMOTION
+
+def choose_emotion(update: Update, context: CallbackContext) -> int:
+    """Сохраняет выбранную эмоцию и запрашивает текст."""
+    context.user_data['emotion'] = update.message.text
     update.message.reply_text('Теперь введите текст для озвучивания:', reply_markup=ReplyKeyboardRemove())
     return GET_TEXT
 
@@ -150,8 +175,9 @@ def generate_speech(update: Update, context: CallbackContext) -> int:
     """Генерирует речь из текста и отправляет аудиофайл."""
     text = update.message.text
     voice = context.user_data['voice']
+    emotion = emotions[context.user_data['emotion']]
     
-    logger.info(f"Generating speech for text: '{text}', voice: {voice}")
+    logger.info(f"Generating speech for text: '{text}', voice: {voice}, emotion: {emotion}")
     
     try:
         temp_file = f"temp_audio_{update.effective_user.id}.mp3"
@@ -198,9 +224,11 @@ def main() -> None:
     dp = updater.dispatcher
 
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('tts', tts_start)],
+        entry_points=[CommandHandler('tts', tts_start),
+                      MessageHandler(Filters.regex(f'^({"|".join(tts_commands)})'), tts_start)],
         states={
             CHOOSE_VOICE: [MessageHandler(Filters.text & ~Filters.command, choose_voice)],
+            CHOOSE_EMOTION: [MessageHandler(Filters.text & ~Filters.command, choose_emotion)],
             GET_TEXT: [MessageHandler(Filters.text & ~Filters.command, generate_speech)]
         },
         fallbacks=[CommandHandler('cancel', cancel)]
