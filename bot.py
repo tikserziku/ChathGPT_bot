@@ -31,9 +31,9 @@ conversation_history = {}
 MAX_TOKENS = 4000
 
 # Состояния для ConversationHandler
-CHOOSE_VOICE, CHOOSE_EMOTION, GET_TONE, GET_TEXT = range(4)
+CHOOSE_VOICE, GET_TEXT = range(2)
 
-# Словари для голосов и эмоций
+# Словарь для голосов
 voices = {
     "Alloy": "alloy",
     "Echo": "echo",
@@ -41,15 +41,6 @@ voices = {
     "Onyx": "onyx",
     "Nova": "nova",
     "Shimmer": "shimmer"
-}
-
-emotions = {
-    "Нейтральный": "нейтрально",
-    "Счастливый": "радостно",
-    "Грустный": "грустно",
-    "Злой": "сердито",
-    "Удивленный": "удивленно",
-    "Испуганный": "испуганно"
 }
 
 def start(update: Update, context: CallbackContext) -> None:
@@ -150,60 +141,27 @@ def tts_start(update: Update, context: CallbackContext) -> int:
     return CHOOSE_VOICE
 
 def choose_voice(update: Update, context: CallbackContext) -> int:
-    """Сохраняет выбранный голос и запрашивает эмоцию."""
+    """Сохраняет выбранный голос и запрашивает текст."""
     context.user_data['voice'] = voices[update.message.text]
-    reply_keyboard = [list(emotions.keys())]
-    update.message.reply_text(
-        'Выберите эмоцию:',
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
-    )
-    return CHOOSE_EMOTION
-
-def choose_emotion(update: Update, context: CallbackContext) -> int:
-    """Сохраняет выбранную эмоцию и запрашивает инструкции по тону."""
-    context.user_data['emotion'] = update.message.text
-    update.message.reply_text(
-        'Теперь вы можете дать дополнительные инструкции по тону речи (например, "скажи очень женственно") или просто напишите "нет" для пропуска этого шага:',
-        reply_markup=ReplyKeyboardRemove()
-    )
-    return GET_TONE
-
-def get_tone(update: Update, context: CallbackContext) -> int:
-    """Сохраняет инструкции по тону и запрашивает текст."""
-    tone = update.message.text
-    if tone.lower() != 'нет':
-        context.user_data['tone'] = tone
-    else:
-        context.user_data['tone'] = ''
-    update.message.reply_text('Теперь введите текст для озвучивания:')
+    update.message.reply_text('Теперь введите текст для озвучивания:', reply_markup=ReplyKeyboardRemove())
     return GET_TEXT
 
 def generate_speech(update: Update, context: CallbackContext) -> int:
     """Генерирует речь из текста и отправляет аудиофайл."""
     text = update.message.text
     voice = context.user_data['voice']
-    emotion = emotions[context.user_data['emotion']]
-    tone = context.user_data.get('tone', '')
     
-    logger.info(f"Generating speech for text: '{text}', voice: {voice}, emotion: {emotion}, tone: {tone}")
+    logger.info(f"Generating speech for text: '{text}', voice: {voice}")
     
     try:
         temp_file = f"temp_audio_{update.effective_user.id}.mp3"
-        
-        # Формируем инструкцию для модели, но не включаем ее в озвучиваемый текст
-        instruction = f"Озвучь следующий текст {emotion}"
-        if tone:
-            instruction += f", {tone}"
-        instruction += ". Не произноси эту инструкцию вслух, начни сразу с текста:"
-        
-        full_text = f"{instruction} {text}"
         
         if hasattr(client, 'audio'):
             # Новый клиент
             response = client.audio.speech.create(
                 model="tts-1",
                 voice=voice,
-                input=full_text
+                input=text
             )
             response.stream_to_file(temp_file)
         else:
@@ -211,7 +169,7 @@ def generate_speech(update: Update, context: CallbackContext) -> int:
             response = client.audio.speech.create(
                 model="tts-1",
                 voice=voice,
-                input=full_text
+                input=text
             )
             with open(temp_file, 'wb') as f:
                 f.write(response.content)
@@ -243,8 +201,6 @@ def main() -> None:
         entry_points=[CommandHandler('tts', tts_start)],
         states={
             CHOOSE_VOICE: [MessageHandler(Filters.text & ~Filters.command, choose_voice)],
-            CHOOSE_EMOTION: [MessageHandler(Filters.text & ~Filters.command, choose_emotion)],
-            GET_TONE: [MessageHandler(Filters.text & ~Filters.command, get_tone)],
             GET_TEXT: [MessageHandler(Filters.text & ~Filters.command, generate_speech)]
         },
         fallbacks=[CommandHandler('cancel', cancel)]
