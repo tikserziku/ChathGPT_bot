@@ -190,11 +190,11 @@ def generate_speech(update: Update, context: CallbackContext) -> int:
     try:
         temp_file = f"temp_audio_{update.effective_user.id}.mp3"
         
-        # Формируем инструкцию для модели
+        # Формируем инструкцию для модели, но не включаем ее в озвучиваемый текст
         instruction = f"Озвучь следующий текст {emotion}"
         if tone:
             instruction += f", {tone}"
-        instruction += ":"
+        instruction += ". Не произноси эту инструкцию вслух, начни сразу с текста:"
         
         full_text = f"{instruction} {text}"
         
