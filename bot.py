@@ -69,39 +69,30 @@ def chat_with_gpt(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     message = update.message.text
 
-    # Получаем историю разговора для данного пользователя
     if user_id not in conversation_history:
         conversation_history[user_id] = []
 
-    # Добавляем сообщение пользователя в историю
     conversation_history[user_id].append({"role": "user", "content": message})
 
     try:
-        # Обрезаем историю, чтобы не превысить лимит токенов
         trimmed_history = trim_chat_history(conversation_history[user_id])
 
         if hasattr(client, 'chat'):
-            # Новый клиент
             response = client.chat.completions.create(
                 model="gpt-4",
                 messages=trimmed_history
             )
             chatgpt_response = response.choices[0].message.content
         else:
-            # Старый клиент
             response = client.ChatCompletion.create(
                 model="gpt-4",
                 messages=trimmed_history
             )
             chatgpt_response = response.choices[0].message['content']
 
-        # Добавляем ответ ChatGPT в историю
         conversation_history[user_id].append({"role": "assistant", "content": chatgpt_response})
-
-        # Ограничиваем историю последними 10 сообщениями
         conversation_history[user_id] = conversation_history[user_id][-10:]
 
-        # Отправляем ответ пользователю
         update.message.reply_text(chatgpt_response)
 
     except Exception as e:
@@ -110,7 +101,7 @@ def chat_with_gpt(update: Update, context: CallbackContext) -> None:
 
 def generate_image(update: Update, context: CallbackContext) -> None:
     """Генерирует изображение на основе запроса пользователя."""
-    prompt = update.message.text[7:].strip()  # Убираем "нарисуй " из начала сообщения
+    prompt = update.message.text[7:].strip()
     
     if not prompt:
         update.message.reply_text("Пожалуйста, укажите, что нарисовать после слова 'нарисуй'.")
@@ -118,7 +109,6 @@ def generate_image(update: Update, context: CallbackContext) -> None:
 
     try:
         if hasattr(client, 'images'):
-            # Новый клиент
             response = client.images.generate(
                 model="dall-e-3",
                 prompt=prompt,
@@ -127,7 +117,6 @@ def generate_image(update: Update, context: CallbackContext) -> None:
             )
             image_url = response.data[0].url
         else:
-            # Старый клиент
             response = client.Image.create(
                 model="dall-e-3",
                 prompt=prompt,
@@ -136,7 +125,6 @@ def generate_image(update: Update, context: CallbackContext) -> None:
             )
             image_url = response['data'][0]['url']
 
-        # Отправляем изображение пользователю
         update.message.reply_photo(image_url, caption=f"Вот изображение по запросу: {prompt}")
 
     except Exception as e:
@@ -147,7 +135,7 @@ def trim_chat_history(history: list) -> list:
     """Обрезает историю чата, чтобы она не превышала максимальное количество токенов"""
     while len(str(history)) > MAX_TOKENS:
         if len(history) > 1:
-            history.pop(1)  # Удаляем второе сообщение (после системного)
+            history.pop(1)
         else:
             break
     return history
@@ -189,6 +177,8 @@ def generate_speech(update: Update, context: CallbackContext) -> int:
     logger.info(f"Generating speech for text: '{text}', voice: {voice}, emotion: {context.user_data['emotion']}")
     
     try:
+        temp_file = f"temp_audio_{update.effective_user.id}.mp3"
+        
         if hasattr(client, 'audio'):
             # Новый клиент
             response = client.audio.speech.create(
@@ -196,27 +186,21 @@ def generate_speech(update: Update, context: CallbackContext) -> int:
                 voice=voice,
                 input=f"{emotion}{text}"
             )
-            temp_file = f"temp_audio_{update.effective_user.id}.mp3"
             response.stream_to_file(temp_file)
         else:
             # Старый клиент
-            response = client.Audio.create(
+            response = client.audio.speech.create(
                 model="tts-1",
                 voice=voice,
                 input=f"{emotion}{text}"
             )
-            temp_file = f"temp_audio_{update.effective_user.id}.mp3"
             with open(temp_file, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=1024):
-                    if chunk:
-                        f.write(chunk)
+                f.write(response.content)
 
-        # Отправляем аудиофайл
         logger.info("Sending audio file to user")
         with open(temp_file, "rb") as audio:
             update.message.reply_audio(audio)
 
-        # Удаляем временный файл
         logger.info(f"Removing temporary file: {temp_file}")
         os.remove(temp_file)
 
@@ -236,7 +220,6 @@ def main() -> None:
     updater = Updater(TELEGRAM_TOKEN)
     dp = updater.dispatcher
 
-    # Добавляем ConversationHandler для TTS
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('tts', tts_start)],
         states={
