@@ -91,7 +91,7 @@ def chat_with_gpt(update: Update, context: CallbackContext) -> None:
         trimmed_history = trim_chat_history(conversation_history[user_id])
 
         response = client.chat.completions.create(
-            model="o1-preview",
+            model="gpt-4-turbo",
             messages=trimmed_history
         )
         chatgpt_response = response.choices[0].message.content
